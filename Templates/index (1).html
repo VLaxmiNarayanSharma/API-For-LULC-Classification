@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LULC Classification</title>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css" />
+    <style>
+        body {
+            background-color: #003366;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        #map {
+            width: 100%;
+            height: 600px;
+            margin-top: 20px;
+        }
+
+        .form-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 20px 0;
+            background-color: #f9f9f9;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 400px;
+        }
+
+        .form-container label {
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .form-container input[type="file"],
+        .form-container input[type="text"],
+        .form-container select,
+        .form-container input[type="submit"] {
+            padding: 10px;
+            margin-bottom: 15px;
+            width: 100%;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+
+        .form-container input[type="submit"] {
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+            border: none;
+            transition: background-color 0.3s ease;
+        }
+
+        .form-container input[type="submit"]:hover {
+            background-color: #0056b3;
+        }
+
+        .classified-image-container {
+            display: flex;
+            justify-content: center;
+            margin-top: 30px;
+        }
+
+        h1, h2 {
+            color: white;
+        }
+
+        .logo {
+            max-width: 150px;
+            margin-bottom: 20px;
+        }
+
+        .centered-form {
+            flex-grow: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .download-button {
+            margin-top: 20px;
+            background-color: #007bff;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: background-color 0.3s ease;
+        }
+
+        .download-button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h1>LULC Classification using Machine Learning Algorithms</h1>
+    <img src="/static/images/NRSC-logo.jpg" alt="Logo" class="logo">
+
+    <div id="map"></div>
+    <div id="areaDisplay" style="margin-top: 10px; font-size: 50px; color: white;"></div>
+
+    <h2>Download ROI TIFF</h2>
+    <label for="roiFileName">Enter File Name for ROI:</label>
+    <input type="text" id="roiFileName" placeholder="Enter file name" />
+    <button id="downloadROI">Download ROI TIFF</button>
+
+    <div class="centered-form" style="color: Black">
+        <div class="form-container">
+            <h1 style="color: black">LULC Classification</h1>
+            <form action="/classify/" method="post" enctype="multipart/form-data">
+                <label for="file">Upload TIFF File:</label>
+                <input type="file" name="file" accept=".tif" required>
+                <label for="method">Select Classification Method:</label>
+                <select name="method">
+                    <option value="Support-Vector-Machine-Grid-Search">SVM (Grid Search)</option>
+                    <option value="Support-Vector-Machine-Random-Search">SVM (Random Search)</option>
+                    <option value="Support-Vector-Machine-Bayes-Search">SVM (Bayes Search)</option>
+                    <option value="Random-Forest-Grid-search">Random Forest (Grid Search)</option>
+                    <option value="Random-Forest-Random-search">Random Forest (Random Search)</option>
+                    <option value="Random-Forest-Bayesian-Search">Random Forest (Bayes Search)</option>
+                    <option value="ANN">Artificial Neural Network</option>
+                </select>
+                <input type="submit" value="Classify Image">
+            </form>
+        </div>
+    </div>
+
+    {% if image_url %}
+    <h2>Classified Land Cover of {{ file_name }} using {{ method }}</h2>
+    <div class="classified-image-container">
+        <img src="/static/{{ image_url }}" alt="Classified Map">
+    </div>
+    {% endif %}
+    {% if classified_tiff_url %}
+    <a href="/static/{{ classified_tiff_url }}" class="download-button">Download Classified TIFF</a>
+    {% endif %}
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+
+    <script>
+        var drawnItems = new L.FeatureGroup();
+        var map = L.map('map').setView([20, 77], 5);
+
+        // Define the OpenStreetMap layer
+        var osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        });
+
+        // Define the Satellite layer
+        var satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: '&copy; <a href="https://www.esri.com/">Esri</a>',
+            maxZoom: 18
+        });
+
+        // Add the OpenStreetMap layer by default
+        osmLayer.addTo(map);
+
+        // Layer control for switching between map views
+        var baseMaps = {
+            "OpenStreetMap": osmLayer,
+            "Satellite": satelliteLayer
+        };
+
+        L.control.layers(baseMaps).addTo(map);
+
+        // Add the feature group to hold drawn items
+        map.addLayer(drawnItems);
+
+        // Define the draw control
+        var drawControl = new L.Control.Draw({
+            edit: { featureGroup: drawnItems },
+            draw: { polygon: true, marker: false, polyline: false, rectangle: true, circle: true, circlemarker: true }
+        });
+        map.addControl(drawControl);
+
+        // Handle the creation of new polygons
+        map.on(L.Draw.Event.CREATED, function (e) {
+            drawnItems.addLayer(e.layer);
+            var coordinates = e.layer.toGeoJSON().geometry.coordinates;
+
+            // Calculate the area using turf.js
+            var geojson = e.layer.toGeoJSON();
+            var area = turf.area(geojson);  // Area in square meters
+            var areaInSqKm = (area / 1000000).toFixed(2);  // Convert to square kilometers
+
+            // Display the area below the map
+            var areaElement = document.getElementById("areaDisplay");
+            areaElement.innerHTML = "Area of drawn polygon: " + areaInSqKm + " km²";
+        });
+
+        // Handle the deletion or clearing of polygons
+        map.on(L.Draw.Event.DELETED, function (e) {
+            var areaElement = document.getElementById("areaDisplay");
+            areaElement.innerHTML = "";  // Clear the area display
+        });
+
+        // Handle the download button click
+        document.getElementById("downloadROI").addEventListener("click", function() {
+            var fileName = document.getElementById("roiFileName").value;
+            if (!fileName) {
+                alert("Please enter a file name.");
+                return;
+            }
+
+            var layers = drawnItems.getLayers();
+            if (layers.length === 0) {
+                alert("No ROI drawn. Please draw a polygon first.");
+                return;
+            }
+
+            var coordinates = layers[0].toGeoJSON().geometry.coordinates;
+
+            fetch("/download/", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: "coordinates=" + JSON.stringify(coordinates) + "&file_name=" + fileName
+            }).then(response => response.json())
+            .then(data => alert("Download Initiated in Earth engine check your drive for folder LULC"));
+        });
+    </script>
+</body>
+</html>
